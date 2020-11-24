@@ -53,7 +53,7 @@ export default async function applyDiscountCodeToCart(context, input) {
   const objectToApplyDiscount = cart;
 
   const discount = await Discounts.findOne({ code: discountCode });
-  if (!discount) throw new ReactionError("not-found", `No discount found for code ${discountCode}`);
+  if (!discount) throw new ReactionError("not-found", `Invalid or expired code`);
 
   const { conditions } = discount;
   let accountLimitExceeded = false;
@@ -67,19 +67,26 @@ export default async function applyDiscountCodeToCart(context, input) {
     userCount = transactionCount.get(userId);
     orderCount = orders.length;
   }
+
+  cart.billing = cart.billing || [];
+  let currentCartRedemptions = cart.billing.find(c => c.data.code === discount.code);
+  let currentCartRedemptionSize = currentCartRedemptions ? currentCartRedemptions.length : 0;
+
+  if(currentCartRedemptions > 1) {
+    throw new ReactionError('error-occurred', "You've already applied this code to this cart.")
+  }
+
   // check limits
   if (conditions) {
-    if (conditions.accountLimit) accountLimitExceeded = conditions.accountLimit <= userCount;
-    if (conditions.redemptionLimit) discountLimitExceeded = conditions.redemptionLimit <= orderCount;
+    // Check redemptions limit on past purchases as well as current redemptions.
+    if (conditions.accountLimit) accountLimitExceeded = conditions.accountLimit <= userCount + currentCartRedemptionSize;
+    // This does not handle pending redemptions on carts from other users but that maybe handled by placeOrder API.
+    if (conditions.redemptionLimit) discountLimitExceeded = conditions.redemptionLimit <= orderCount + currentCartRedemptionSize;
   }
 
   // validate basic limit handling
   if (accountLimitExceeded === true || discountLimitExceeded === true) {
     throw new ReactionError("error-occurred", "Code is expired");
-  }
-
-  if (!cart.billing) {
-    cart.billing = [];
   }
 
   cart.billing.push({
